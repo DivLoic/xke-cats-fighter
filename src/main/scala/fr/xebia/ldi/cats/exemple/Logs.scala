@@ -9,68 +9,89 @@ import org.slf4j.{Logger, LoggerFactory}
   */
 object Logs extends App {
 
-  sealed trait LogLevel
+  sealed trait Level
 
-  final case class Debug() extends LogLevel
-  final case class Info() extends LogLevel
-  final case class Warn() extends LogLevel
-  final case class Error() extends LogLevel
-  final case class Fatal() extends LogLevel
+  final case object Debug extends Level
+  final case object Info extends Level
+  final case object Warn extends Level
+  final case object Error extends Level
 
-  sealed abstract class LogMessage[T <: LogLevel](val msg: String)
-
-  final case class DebugMessage(message: String) extends LogMessage[Debug](msg = message)
-  final case class InfoMessage(message: String) extends LogMessage[Info](msg = message)
-  final case class WarnMessage(message: String) extends LogMessage[Warn](msg = message)
-  final case class ErrorMessage(message: String) extends LogMessage[Error](msg = message)
-
-
-  trait MessageLogger[A <: LogLevel]{
-    def log(message: LogMessage[A])(implicit logger: Logger): Unit
-  }
-
-  object MessageInstances {
-
-    implicit val debugLogger: MessageLogger[Debug] = new MessageLogger[Debug] {
-      override def log(message: LogMessage[Debug])(implicit logger: Logger): Unit =
-        logger.debug(message.msg)
-    }
-
-    implicit val infoLogger: MessageLogger[Info] = new MessageLogger[Info] {
-      override def log(message: LogMessage[Info])(implicit logger: Logger): Unit =
-        logger.info(message.msg)
-    }
-
-    implicit val warnLogger: MessageLogger[Warn] = new MessageLogger[Warn] {
-      override def log(message: LogMessage[Warn])(implicit logger: Logger): Unit =
-        logger.warn(message.msg)
-    }
-
-    implicit val errorLogger: MessageLogger[Error] = new MessageLogger[Error] {
-      override def log(message: LogMessage[Error])(implicit logger: Logger): Unit =
-        logger.error(message.msg)
-    }
-  }
-
-  object MessageSyntax {
-
-    implicit class MessageOps[A <: LogLevel](value: LogMessage[A]) {
-      def log(implicit loggerOps: MessageLogger[A], logger: Logger): Unit =
-        loggerOps.log(value)
+  final case class LogMessage(level: Level, msg: String){
+    def log(implicit logger: Logger) = level match {
+      case Debug => logger.debug(msg)
+      case Info => logger.info(msg)
+      case Warn => logger.warn(msg)
+      case Error => logger.error(msg)
     }
   }
 
   implicit val logger: Logger = LoggerFactory.getLogger(getClass)
 
-  import MessageInstances._
-  import MessageSyntax._
+  //LogMessage(Debug, "Oh! something not so awsome just append").log
+  //LogMessage(Error, "Oh! something really important just append").log
 
-  DebugMessage("Oh! somthing not so awsome just append").log
+  //type Logged[T] = Writer[Vector[Message[_]], T]
 
-  type Logged[T] = Writer[LogMessage[LogLevel], T]
-
-
+  type Logged[T] = Writer[Vector[LogMessage], T]
 
 
+  import cats.syntax.applicative._
+  import cats.instances.vector._
+  import cats.syntax.semigroup._
+  import cats.syntax.option._
+  import cats.syntax.writer._
+  import cats.syntax.option._
+
+
+  val mapping = Map("a" -> 'alpha, "b" -> 'beta, "d" -> 'delta)
+
+  def doRun(payload: Option[String]): Logged[Option[String]] = {
+
+    for {
+      a <- payload.pure[Logged]
+      _ <- a match {
+        case Some(key) => Vector(LogMessage(Debug, s"looking for the key $key")).tell
+        case None => Vector(LogMessage(Info, "the key was empty")).tell
+      }
+      b <- a.flatMap(mapping.get).pure[Logged]
+      _ <- b match {
+        case None => Vector(LogMessage(Warn, s"the map does not contain the key $a")).tell
+        case _ => Option.empty[String].pure[Logged]
+      }
+
+
+    } yield a
+
+  }
+
+  def doRunAgain(payload: Option[String]): Logged[Option[String]] = {
+    payload.pure[Logged].mapBoth { (messages, mayBeKey) =>
+
+      mayBeKey match {
+        case None => (messages ++ Vector(LogMessage(Debug, "the key was empty")), None)
+        case Some(key) => (messages, mapping.get(key))
+      }
+
+    }.mapBoth {(messages, mayBeSymb) =>
+
+      mayBeSymb match {
+        case None => (messages ++ Vector(LogMessage(Info, "the symbol was not defined")), None)
+        case Some(symbol) => (messages, Some(symbol.toString()))
+      }
+
+    }
+  }
+
+  println("EXEMPLE WITH None " + "---" * 30)
+  doRun(None).run._1.foreach(_.log)
+  println("\n\n")
+
+  println("EXEMPLE WITH C " + "---" * 30)
+  doRun(Some("c")).run._1.foreach(_.log)
+  println("\n\n")
+
+  println("EXEMPLE WITH A " + "---" * 30)
+  doRun(Some("a")).run._1.foreach(_.log)
+  println("\n\n")
 
 }
